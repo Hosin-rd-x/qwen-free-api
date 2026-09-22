@@ -1,4 +1,7 @@
-# Qwen-Free-API — production-ish single-stage build
+# Qwen-Free-API + DeepSeek-Free-API merged bridge (free plan: 1 service, 2 bridges)
+# nginx :80 -> qwen :8080 (default) + deepseek :8000 (under /deepseek/<secret>/)
+
+# ---- stage 1: qwen go binary ----
 FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -6,12 +9,31 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /qwen-api .
 
-FROM alpine:3.20
-RUN apk add --no-cache ca-certificates && adduser -D -u 10001 bridge
+# ---- stage 2: deepseek python deps (cached separately) ----
+FROM python:3.12-slim AS dsdeps
+WORKDIR /ds
+COPY deepseek/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# ---- final ----
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends nginx ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
+
+# qwen
 COPY --from=builder /qwen-api /app/qwen-api
 COPY .env.example /app/.env.example
-USER bridge
-ENV PORT=8080 HOST=0.0.0.0
-EXPOSE 8080
-ENTRYPOINT ["/app/qwen-api"]
+
+# deepseek
+COPY --from=dsdeps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=dsdeps /usr/local/bin/uvicorn /usr/local/bin/uvicorn
+COPY deepseek/ /app/ds/
+
+# front
+COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+COPY deploy/supervisord.conf /etc/supervisord.conf
+RUN rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default
+
+ENV HOST=0.0.0.0 PORT=8080 SERVER_INTERACTIVE_LOGIN=0
+EXPOSE 80
+CMD ["supervisord", "-c", "/etc/supervisord.conf"]
