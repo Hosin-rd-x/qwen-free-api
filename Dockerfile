@@ -32,7 +32,9 @@ COPY deepseek/ /app/ds/
 # front
 COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
 COPY deploy/supervisord.conf /etc/supervisord.conf
-RUN rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default
+COPY deploy/nginx-start.sh /app/nginx-start.sh
+RUN rm -rf /etc/nginx/sites-enabled /etc/nginx/sites-available/default && ls -la /etc/nginx/ || true
+RUN echo "--- nginx dirs after cleanup ---" && find /etc/nginx -maxdepth 2 | sort
 
 ENV HOST=0.0.0.0 PORT=8080 SERVER_INTERACTIVE_LOGIN=0
 EXPOSE 80
